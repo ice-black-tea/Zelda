@@ -52,7 +52,7 @@ class Container(BaseContainer):
             HTTP_PORT=Config.Prompt(default=80, type=int, cached=True),
             HTTPS_PORT=Config.Prompt(default=443, type=int, cached=True),
             ACME_DNS_API=Config.Sample({
-                "ACME_DNS_API": "dns_ali  <= --dns parameter 👉 https://github.com/acmesh-official/acme.sh/wiki/dnsapi",
+                "ACME_DNS_API": "dns_ali  <= parameter --dns, find from https://github.com/acmesh-official/acme.sh/wiki/dnsapi",
                 "Ali_Key     ": "<key>    <= environment variable with dns_ali",
                 "Ali_Secret  ": "<secret> <= environment variable with dns_ali",
             })
@@ -61,7 +61,7 @@ class Container(BaseContainer):
     @cached_property
     def enable(self):
         return self.manager.config.get(
-            f"NGINX_ENABLE",
+            "NGINX_ENABLE",
             type=bool,
             default=Config.Confirm(default=True, cached=True)
         )
@@ -80,5 +80,5 @@ class Container(BaseContainer):
     def on_started(self):
         self.manager.change_owner(
             self.get_app_path(),
-            self.manager.environ.user
+            self.manager.user
         )

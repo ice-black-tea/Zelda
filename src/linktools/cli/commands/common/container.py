@@ -120,6 +120,16 @@ class ConfigCommand(BaseCommand):
             privilege=False,
         ).check_call()
 
+    @subcommand("list", help="list container configs")
+    def on_command_list(self):
+        keys = set()
+        containers = manager.prepare_installed_containers()
+        for container in containers:
+            keys.update(container.configs.keys())
+        for key in sorted(keys):
+            value = manager.config.get(key)
+            self.logger.info(f"{key}: {value}")
+
     @subcommand("reload", help="reload container configs")
     def on_command_reload(self):
         manager.config.set("RELOAD_CONFIG", True)
@@ -196,7 +206,6 @@ class Command(BaseCommand):
         subcommand = self.parse_subcommand(args)
         if not subcommand or isinstance(subcommand, SubCommandGroup):
             return self.print_subcommands(args, root=subcommand, max_level=2)
-        manager.check_installed_containers()
         return subcommand.run(args)
 
     @subcommand("list", help="list all containers")
@@ -204,12 +213,13 @@ class Command(BaseCommand):
         installed_containers = manager.get_installed_containers()
         depend_containers = manager.resolve_depend_containers(installed_containers)
         for container in sorted(manager.containers.values(), key=lambda o: o.order):
-            if not container.enable:
-                self.logger.info(f"[ ] {container.name}", extra={"style": "dim"})
-            elif container in installed_containers:
-                self.logger.info(f"[*] {container.name} [added]", extra={"style": "red bold"})
-            elif container in depend_containers:
-                self.logger.info(f"[-] {container.name} [dependency]", extra={"style": "red dim"})
+            if container in depend_containers:
+                if not container.enable:
+                    self.logger.info(f"[ ] {container.name}", extra={"style": "dim"})
+                elif container in installed_containers:
+                    self.logger.info(f"[*] {container.name} [added]", extra={"style": "red bold"})
+                else:
+                    self.logger.info(f"[-] {container.name} [dependency]", extra={"style": "red dim"})
             else:
                 self.logger.info(f"[ ] {container.name}", extra={"style": "dim"})
 
@@ -234,7 +244,7 @@ class Command(BaseCommand):
         result = sorted(list([container.name for container in containers]))
         self.logger.info(f"Remove {', '.join(result)} success")
 
-    @subcommand("info", help="Display container info")
+    @subcommand("info", help="display container info")
     @subcommand_argument("names", metavar="CONTAINER", nargs="+", help="container name",
                          choices=utils.lazy_load(lambda: [o.name for o in manager.containers.values()]))
     def on_command_info(self, names: List[str]):
@@ -252,7 +262,7 @@ class Command(BaseCommand):
             }
             self.logger.info(yaml.dump(data, sort_keys=False).strip())
 
-    @subcommand("up", help="deploy docker containers")
+    @subcommand("up", help="deploy installed containers")
     def on_command_up(self):
         containers = manager.prepare_installed_containers()
         for container in containers:
@@ -266,7 +276,7 @@ class Command(BaseCommand):
         for container in reversed(containers):
             container.on_started()
 
-    @subcommand("restart", help="restart docker containers")
+    @subcommand("restart", help="restart installed containers")
     def on_command_restart(self):
         containers = manager.prepare_installed_containers()
         for container in containers:
@@ -280,7 +290,7 @@ class Command(BaseCommand):
         for container in reversed(containers):
             container.on_started()
 
-    @subcommand("down", help="stop docker containers")
+    @subcommand("down", help="stop installed containers")
     def on_command_down(self):
         containers = manager.prepare_installed_containers()
         manager.create_docker_compose_process(

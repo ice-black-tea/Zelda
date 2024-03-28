@@ -46,10 +46,9 @@ class Container(BaseContainer):
 
     @cached_property
     def exposes(self) -> [ExposeLink]:
-        expose_port = self.manager.config.get("PORTAINER_EXPOSE_PORT", type=int, default=0)
         return [
             self.expose_public("Portainer", "docker", "Docker管理工具", self.load_nginx_url("PORTAINER_DOMAIN")),
-            self.expose_container("Portainer", "docker", "Docker管理工具", self.load_port_url(expose_port, https=False)),
+            self.expose_container("Portainer", "docker", "Docker管理工具", self.load_port_url("PORTAINER_EXPOSE_PORT", https=False)),
         ]
 
     def on_starting(self):
@@ -61,5 +60,5 @@ class Container(BaseContainer):
     def on_started(self):
         self.manager.change_owner(
             self.get_path("nginx.conf"),
-            self.manager.environ.user
+            self.manager.user
         )

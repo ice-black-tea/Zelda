@@ -94,13 +94,6 @@ class BaseEnviron(abc.ABC):
         return self.tools.machine
 
     @property
-    def user(self):
-        """
-        当前用户
-        """
-        return getpass.getuser()
-
-    @property
     def debug(self) -> bool:
         """
         debug模式
@@ -259,7 +252,7 @@ class BaseEnviron(abc.ABC):
         环境相关配置
         """
         config = self._create_config()
-        config.load_default()
+        config.load_from_env()
         return config
 
     def wrap_config(self) -> "Config":

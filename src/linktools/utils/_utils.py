@@ -27,10 +27,12 @@
  /_==__==========__==_ooo__ooo=_/'   /___________,"
 """
 import functools
+import getpass
 import gzip
 import hashlib
 import inspect
 import os
+import platform
 import random
 import re
 import socket
@@ -599,3 +601,41 @@ def parser_cookie(cookie: str) -> Dict[str, str]:
         key_value = item.split("=", 1)
         cookies[key_value[0].strip()] = key_value[1].strip() if len(key_value) > 1 else ''
     return cookies
+
+
+_SYSTEM = platform.system().lower()
+_MACHINE = platform.machine().lower()
+
+
+def get_system():
+    return _SYSTEM
+
+
+def get_machine():
+    return _MACHINE
+
+
+def get_user():
+    return getpass.getuser()
+
+
+def get_uid(user: str = None):
+    if get_system() in ("darwin", "linux"):
+        if user:
+            import pwd
+            return pwd.getpwnam(user).pw_uid
+        else:
+            return os.getuid()
+    else:
+        return 0
+
+
+def get_gid(user: str = None):
+    if get_system() in ("darwin", "linux"):
+        if user:
+            import pwd
+            return pwd.getpwnam(user).pw_gid
+        else:
+            return os.getgid()
+    else:
+        return 0

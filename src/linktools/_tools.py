@@ -29,7 +29,6 @@
 
 import os
 import pickle
-import platform
 import shutil
 import sys
 import warnings
@@ -432,8 +431,8 @@ class Tools(object):
         self.logger = env.get_logger("tools")
 
         self.config = kwargs
-        self.config.setdefault("system", platform.system().lower())
-        self.config.setdefault("machine", platform.machine().lower())
+        self.config.setdefault("system", utils.get_system())
+        self.config.setdefault("machine", utils.get_machine())
         self.config.setdefault("interpreter", sys.executable)
 
     @property

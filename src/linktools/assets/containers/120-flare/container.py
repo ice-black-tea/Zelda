@@ -72,12 +72,12 @@ class Container(BaseContainer):
 
         for key, value in vars(ExposeMixin).items():
             if isinstance(value, ExposeCategory):
-                categories.setdefault(value, set())
+                categories.setdefault(value, list())
 
         for container in sorted(self.manager.containers.values(), key=lambda o: o.order):
             for expose in container.exposes:
                 if isinstance(expose, ExposeLink) and expose.is_valid:
-                    categories[expose.category].add(expose)
+                    categories[expose.category].append(expose)
                     if expose.category is self.expose_public:
                         apps.append(expose)
                     bookmarks.append(expose)

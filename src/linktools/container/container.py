@@ -76,7 +76,8 @@ class ExposeMixin:
     def load_config_url(self: "BaseContainer", key: str):
         return self.manager.config.get(key, type=str, default=None)
 
-    def load_port_url(self: "BaseContainer", port: int, https: bool = True):
+    def load_port_url(self: "BaseContainer", key: str, https: bool = True):
+        port = self.manager.config.get(key, type=int, default=0)
         if 0 < port < 65535:
             return f"{'https' if https else 'http'}://{self.manager.host}:{port}"
         return None
@@ -134,8 +135,8 @@ class AbstractMetaClass(type):
 class BaseContainer(ExposeMixin, NginxMixin, metaclass=AbstractMetaClass):
     __abstract__ = True
 
-    def __init__(self, manager: "ContainerManager", root_path: str):
-        name = self.__module__
+    def __init__(self, manager: "ContainerManager", root_path: str, name: str = None):
+        name = name or self.__module__
         index = name.rfind(".")
         if index >= 0:
             name = name[index + 1:]
@@ -144,7 +145,7 @@ class BaseContainer(ExposeMixin, NginxMixin, metaclass=AbstractMetaClass):
             self._order = int(match.group(1))
             self._name = match.group(2)
         else:
-            self._order = 500
+            self._order = 900
             self._name = name
         self.manager = manager
         self.logger = manager.logger
@@ -180,7 +181,7 @@ class BaseContainer(ExposeMixin, NginxMixin, metaclass=AbstractMetaClass):
 
     @cached_property
     def docker_compose(self) -> Optional[Dict[str, Any]]:
-        for name in ["docker-compose.yml", "compose.yml"]:
+        for name in self.manager.docker_compose_names:
             path = self.get_path(name)
             if os.path.exists(path):
                 data = self.render_template(path)
@@ -391,6 +392,8 @@ class BaseContainer(ExposeMixin, NginxMixin, metaclass=AbstractMetaClass):
             key: utils.lazy_load(self.manager.config.get, key)
             for key in self.manager.config.keys()
         }
+
+        context.update(kwargs)
         context.setdefault("DEBUG", self.manager.debug)
         context.setdefault("manager", self.manager)
         context.setdefault("config", self.manager.config)
@@ -399,16 +402,25 @@ class BaseContainer(ExposeMixin, NginxMixin, metaclass=AbstractMetaClass):
         context.setdefault("str", lambda obj, default="": self.manager.config.cast(obj, type=str, default=default))
         context.setdefault("int", lambda obj, default=0: self.manager.config.cast(obj, type=int, default=default))
         context.setdefault("float", lambda obj, default=0.0: self.manager.config.cast(obj, type=float, default=default))
-        context.update(kwargs)
 
         with open(source, "rt") as fd:
-            data = fd.read()
-        result = Template(data).render(context)
+            template = Template(fd.read())
+        result = template.render(context)
         if destination is not None:
-            with open(source, "wt") as fd:
+            with open(destination, "wt") as fd:
                 fd.write(result)
 
         return result
 
     def __repr__(self):
         return f"Container<{self.name}>"
+
+
+class SimpleContainer(BaseContainer):
+
+    def __init__(self, manager: "ContainerManager", root_path: str):
+        super().__init__(
+            manager,
+            root_path,
+            name=os.path.basename(root_path)
+        )

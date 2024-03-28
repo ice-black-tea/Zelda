@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Dict, Any, List, Union, Callable, Tuple, Set
 
 from filelock import FileLock
 
-from . import BaseContainer
+from .container import BaseContainer, SimpleContainer
 from .repository import Repository
 from .. import utils, Config
 from .._environ import environ
@@ -51,44 +51,48 @@ class ContainerError(Exception):
 
 class ContainerManager:
 
-    def __init__(self, environ: "BaseEnviron", name: str = None):  # all_in_one
+    def __init__(self, environ: "BaseEnviron", name: str = "aio"):  # all_in_one
+        self.user = utils.get_user()
+        self.uid = utils.get_uid()
+        self.gid = utils.get_gid()
+
         self.environ = environ
         self.logger = environ.get_logger("container")
-
-        if self.system in ("darwin", "linux"):
-            import pwd
-            get_uid = lambda user: pwd.getpwnam(user).pw_uid
-            get_gid = lambda user: pwd.getpwnam(user).pw_gid
-        else:
-            get_uid = lambda user: 0
-            get_gid = lambda user: 0
 
         self.config = self.environ.wrap_config()
         self.config.envvar_prefix = ""
         self.config.namespace = "CONTAINER"
         self.config.update_defaults(
             COMPOSE_PROJECT_NAME=name or self.environ.name,
-            DOCKER_USER=Config.Prompt(default=os.environ.get("SUDO_USER", self.environ.user), cached=True),
-            DOCKER_PUID=Config.Lazy(lambda cfg: get_uid(cfg.get("DOCKER_USER", type=str))),
-            DOCKER_PGID=Config.Lazy(lambda cfg: get_gid(cfg.get("DOCKER_USER", type=str))),
+            DOCKER_USER=Config.Prompt(default=os.environ.get("SUDO_USER", self.user), cached=True),
+            DOCKER_PUID=Config.Lazy(lambda cfg: utils.get_uid(cfg.get("DOCKER_USER", type=str))),
+            DOCKER_PGID=Config.Lazy(lambda cfg: utils.get_gid(cfg.get("DOCKER_USER", type=str))),
+        )
+
+        self.docker_container_name = "container.py"
+        self.docker_compose_names = (
+            "compose.yaml",
+            "compose.yml",
+            "docker-compose.yaml",
+            "docker-compose.yml"
         )
 
     @property
     def debug(self):
-        return self.environ.debug or os.environ.get("DEBUG", False)
+        return os.environ.get("DEBUG", self.environ.debug)
 
     @property
     def system(self) -> str:
-        return self.environ.tools.system
+        return self.environ.system
 
     @property
     def machine(self) -> str:
-        return self.environ.tools.machine
+        return self.environ.machine
 
     @cached_property
     def container_type(self):
         choices = ["docker", "docker-rootless", "podman"] \
-            if os.getuid() != 0 \
+            if self.system in ("darwin", "linux") and os.getuid() != 0 \
             else ["docker", "podman"]
         return self.config.get(
             "CONTAINER_TYPE",
@@ -180,6 +184,10 @@ class ContainerManager:
             if container.name in result:
                 self.logger.debug(f"Container `{container.name}` already exists, overwrite.")
             result[container.name] = container
+        with self._config_lock:
+            for name in self._load_config(self._config_path):
+                if name not in result:
+                    self.logger.warning(f"Not found installed container `{name}`, skip.")
         return result
 
     def _load_containers(self) -> List[BaseContainer]:
@@ -213,20 +221,29 @@ class ContainerManager:
     def _load_container(self, path: str):
         if not os.path.isdir(path):
             return
-        container_path = os.path.join(path, "container.py")
-        if not os.path.exists(container_path):
-            return
-        try:
-            name = path.replace(os.sep, ".")
-            module = utils.lazy_import_file(name, container_path)
-            for key, value in module.__dict__.items():
-                if isinstance(value, type) and issubclass(value, BaseContainer):
-                    if not value.__abstract__:
-                        container = value(self, path)
-                        self.logger.debug(f"Load container {container.name} in {path}")
-                        yield container
-        except Exception as e:
-            self.logger.warning(f"Failed to load container from `{path}`: {e}")
+
+        container_path = os.path.join(path, self.docker_container_name)
+        if os.path.exists(container_path):
+            try:
+                name = path.replace(os.sep, ".")
+                module = utils.lazy_import_file(name, container_path)
+                for key, value in module.__dict__.items():
+                    if isinstance(value, type) and issubclass(value, BaseContainer):
+                        if not value.__abstract__:
+                            container = value(self, path)
+                            self.logger.debug(f"Load container {container.name} in {path}")
+                            yield container
+                            return
+            except Exception as e:
+                self.logger.warning(f"Failed to load container from `{path}`: {e}")
+
+        for compose_name in self.docker_compose_names:
+            compose_path = os.path.join(path, compose_name)
+            if os.path.exists(compose_path):
+                container = SimpleContainer(self, path)
+                self.logger.debug(f"Load container {container.name} in {path}")
+                yield container
+                return
 
     def get_installed_containers(self) -> List[BaseContainer]:
         with self._config_lock:
@@ -301,13 +318,14 @@ class ContainerManager:
             containers = self._load_installed_containers()
 
             result = set()
-            remove_names = set()
+            remove_names = set(names)
             for name in set(names):
                 if name not in self.containers:
                     continue
-                remove_names.add(name)
                 for container in containers:
                     if not container.is_depend_on(name):
+                        continue
+                    if container.name in remove_names:
                         continue
                     if force:
                         remove_names.add(container.name)
@@ -318,8 +336,8 @@ class ContainerManager:
                         )
 
             for name in remove_names:
-                container = self.containers[name]
-                if container in containers:
+                container = self.containers.get(name, None)
+                if container and container in containers:
                     result.add(container)
                     containers.remove(container)
 
@@ -349,7 +367,7 @@ class ContainerManager:
         if "cwd" not in kwargs:
             kwargs["cwd"] = self.environ.get_data_path("container", create_parent=True)
         if privilege:
-            if self.system in ("darwin", "linux") and self.environ.user != "root":
+            if self.system in ("darwin", "linux") and self.uid != 0:
                 args = ["sudo", *args]
         return utils.Popen(*args, **kwargs)
 
@@ -398,10 +416,11 @@ class ContainerManager:
         return self.create_process(*commands, *options, *args, append_env=append_env, privilege=privilege, **kwargs)
 
     def change_owner(self, path: str, user: str):
-        if self.system in ("darwin", "linux"):
+        if hasattr(os, "chown") and os.path.exists(path):
+            info = os.stat(path)
             self.create_process(
                 "chown", "-R", user, path,
-                privilege=self.environ.user != user
+                privilege=self.uid != info.st_uid or self.uid != utils.get_uid(user)
             ).check_call()
 
     def get_all_repos(self) -> Dict[str, Dict[str, str]]:

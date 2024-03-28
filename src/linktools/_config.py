@@ -71,9 +71,12 @@ def _cast_str(obj: Any) -> str:
     return str(obj)
 
 
-_cast_types: "Dict[Type[T], Callable[[Any], T]]" = dict()
-_cast_types[bool] = _cast_bool
-_cast_types[str] = _cast_str
+_CONFIG_ENV = "ENV"
+
+_CONFIG_TYPES: "Dict[Type[T], Callable[[Any], T]]" = {
+    bool: _cast_bool,
+    str: _cast_str,
+}
 
 
 class ConfigError(Exception):
@@ -237,7 +240,7 @@ class Config:
         """
         return self._environ.get_data_path(f"{self._environ.name}.cfg", create_parent=True)
 
-    def load_default(self):
+    def load_from_env(self):
         """
         从缓存中加载配置
         """
@@ -245,7 +248,11 @@ class Config:
             try:
                 config_parser = ConfigParser()
                 config_parser.read(self.path)
-                for key, value in config_parser.items(configparser.DEFAULTSECT):
+                if not config_parser.has_section(_CONFIG_ENV):
+                    config_parser.add_section(_CONFIG_ENV)
+                    with open(self.path, "wt") as fd:
+                        config_parser.write(fd)
+                for key, value in config_parser.items(_CONFIG_ENV):
                     self.set(key, value)
             except Exception as e:
                 self._environ.logger.warning(f"Load config from {self.path} failed: {e}")
@@ -255,7 +262,7 @@ class Config:
         类型转换
         """
         if type is not None and type is not __missing__:
-            cast = _cast_types.get(type, type)
+            cast = _CONFIG_TYPES.get(type, type)
             try:
                 return cast(obj)
             except Exception as e:
@@ -531,8 +538,8 @@ class Config:
                 f"Cannot find config \"{key}\". {os.linesep}" \
                 f"You can use any of the following methods to fix it: {os.linesep}" \
                 f"1. set \"{config.envvar_prefix}{key}\" as an environment variable,{os.linesep}" \
-                f"2. set \"{key}\" in the default section of {config.path}, such as: {os.linesep}" \
-                f"   [DEFAULT] {os.linesep}" \
+                f"2. set \"{key}\" in [{_CONFIG_ENV}] section of {config.path}, such as: {os.linesep}" \
+                f"   [{_CONFIG_ENV}] {os.linesep}" \
                 f"   KEY1 = value1 {os.linesep}" \
                 f"   KEY2 = value2 {os.linesep}"
             if self.data:
@@ -542,7 +549,7 @@ class Config:
                 else:
                     message += f"=> {self.data} {os.linesep}"
             else:
-                message += f"=> {key} = <value> <= add this line under the [DEFAULT] section {os.linesep}"
+                message += f"=> {key} = <value> <= add this line {os.linesep}"
 
             raise ConfigError(message.rstrip())
 
